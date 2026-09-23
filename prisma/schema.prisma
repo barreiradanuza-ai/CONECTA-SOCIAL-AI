@@ -1,0 +1,617 @@
+// Conecta Social AI — modelo de dados
+// Todas as entidades de negócio são isoladas por organização (orgId) e, quando aplicável, por marca (brandId).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Enums ───────────────────────────
+
+enum Role {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum Network {
+  FACEBOOK
+  INSTAGRAM
+}
+
+enum AccountStatus {
+  ACTIVE
+  EXPIRED
+  ERROR
+  DISCONNECTED
+}
+
+enum Pillar {
+  EDUCATION
+  ENGAGEMENT
+  AUTHORITY
+  OFFERS
+  INSTITUTIONAL
+  SEASONAL
+  STORYTELLING
+}
+
+enum PostFormat {
+  FEED_IMAGE
+  CAROUSEL
+  STORY
+  REEL
+}
+
+enum PostStatus {
+  PLANNED
+  GENERATING
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  PARTIALLY_PUBLISHED
+  FAILED
+  CANCELED
+}
+
+enum TargetStatus {
+  PENDING
+  QUEUED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELED
+  SKIPPED
+}
+
+enum OperationMode {
+  SUPERVISED
+  AUTOMATIC
+}
+
+enum AssetKind {
+  IMAGE
+  VIDEO
+  FONT
+  OTHER
+}
+
+enum AssetRole {
+  LOGO_PRIMARY
+  LOGO_TRANSPARENT
+  LOGO_ALT
+  GRAPHIC_ELEMENT
+  REFERENCE
+  APPROVED_PIECE
+  PHOTO
+  VIDEO
+  FONT
+  GENERATED
+  COMPOSED
+  CHARACTER_REFERENCE
+}
+
+enum AssetSource {
+  UPLOAD
+  AI
+  COMPOSED
+}
+
+enum OfferStatus {
+  DRAFT
+  APPROVED
+  ARCHIVED
+}
+
+enum NotificationLevel {
+  INFO
+  WARNING
+  ERROR
+}
+
+enum Origin {
+  AI
+  HUMAN
+}
+
+// ─────────────────────────── Identidade e acesso ───────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  memberships   Membership[]
+  brands        Brand[]
+  secrets       IntegrationSecret[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String
+  passwordHash String
+  isActive     Boolean      @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+}
+
+model Membership {
+  id        String       @id @default(cuid())
+  userId    String
+  orgId     String
+  role      Role         @default(EDITOR)
+  createdAt DateTime     @default(now())
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+}
+
+model IntegrationSecret {
+  id        String       @id @default(cuid())
+  orgId     String
+  key       String // ex.: ANTHROPIC_API_KEY, OPENAI_API_KEY
+  valueEnc  String // AES-256-GCM
+  updatedAt DateTime     @updatedAt
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, key])
+}
+
+// ─────────────────────────── Marca ───────────────────────────
+
+model Brand {
+  id                 String   @id @default(cuid())
+  orgId              String
+  name               String
+  slug               String
+  website            String?
+  slogan             String?
+  description        String?  @db.Text
+  positioning        String?  @db.Text
+  toneOfVoice        String?  @db.Text
+  communicationPillars String[] @default([])
+  targetAudience     String?  @db.Text
+  visualGuidelines   String?  @db.Text
+  forbiddenTerms     String[] @default([])
+  defaultHashtags    String[] @default([])
+  colors             Json // { primary, secondary, accent, background, text, onPrimary }
+  fontHeadingAssetId String?
+  fontBodyAssetId    String?
+  // Personagem da marca (universo narrativo / mini-novelas)
+  personaEnabled     Boolean  @default(false)
+  personaName        String?
+  seriesTitle        String?
+  personaBible       String?  @db.Text
+  personaVisual      String?  @db.Text
+  timezone           String   @default("America/Sao_Paulo")
+  colorsConfirmed    Boolean  @default(false)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  org             Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  automation      AutomationSettings?
+  whatsapp        WhatsAppConfig?
+  socialAccounts  SocialAccount[]
+  assets          MediaAsset[]
+  templates       Template[]
+  offers          Offer[]
+  campaigns       Campaign[]
+  posts           Post[]
+  trackingLinks   TrackingLink[]
+  insights        PerformanceInsight[]
+  trendNotes      TrendNote[]
+
+  @@unique([orgId, slug])
+}
+
+model AutomationSettings {
+  id                     String        @id @default(cuid())
+  brandId                String        @unique
+  autopilotEnabled       Boolean       @default(false)
+  mode                   OperationMode @default(SUPERVISED)
+  planningHorizonDays    Int           @default(30)
+  productionLeadDays     Int           @default(3)
+  igFeedPerDay           Int           @default(1)
+  fbFeedPerDay           Int           @default(1)
+  storiesPerDay          Int           @default(3)
+  reelsPerWeek           Int           @default(3)
+  carouselsPerWeek       Int           @default(2)
+  storiesToFacebook      Boolean       @default(false)
+  // Horários HH:mm no fuso da marca
+  feedTimes              String[]      @default(["12:00"])
+  fbOnlyTimes            String[]      @default(["18:30"])
+  storyTimes             String[]      @default(["09:00", "13:30", "19:00"])
+  reelTimes              String[]      @default(["19:30"])
+  reelWeekdays           Int[]         @default([1, 3, 5]) // 0=domingo
+  pillarWeights          Json // { EDUCATION: 30, ... }
+  approvalRequiredPillars Pillar[]     @default([OFFERS])
+  approvalRequiredFormats PostFormat[] @default([])
+  maxHashtagsInstagram   Int           @default(5)
+  maxGenerationsPerRun   Int           @default(4)
+  notifyEmail            String?
+  notifyWebhookUrl       String?
+  pausedUntil            DateTime?
+  updatedAt              DateTime      @updatedAt
+  brand                  Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+model WhatsAppConfig {
+  id             String  @id @default(cuid())
+  brandId        String  @unique
+  phoneE164      String? // ex.: 5511999999999
+  defaultMessage String  @default("Olá! Vim pelas redes sociais e quero saber qual internet está disponível no meu endereço.")
+  ctaText        String  @default("Quer descobrir qual internet está disponível no seu endereço? Fale com um especialista pelo WhatsApp.")
+  landingEnabled Boolean @default(true)
+  utmSource      String  @default("social")
+  utmMedium      String  @default("organic")
+  crmWebhookUrl  String? // integração futura (ex.: Data Crazy)
+  brand          Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────── Contas sociais ───────────────────────────
+
+model SocialAccount {
+  id             String        @id @default(cuid())
+  orgId          String
+  brandId        String
+  network        Network
+  externalId     String // Page ID ou IG User ID
+  name           String
+  username       String?
+  pictureUrl     String?       @db.Text
+  linkedPageId   String? // para IG: Page do Facebook vinculada
+  accessTokenEnc String        @db.Text
+  tokenExpiresAt DateTime?
+  scopes         String[]      @default([])
+  status         AccountStatus @default(ACTIVE)
+  lastCheckedAt  DateTime?
+  lastError      String?       @db.Text
+  connectedById  String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  brand   Brand                   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  targets PostTarget[]
+  metrics AccountMetricSnapshot[]
+
+  @@unique([brandId, network, externalId])
+}
+
+model OAuthPending {
+  id         String   @id @default(cuid())
+  orgId      String
+  brandId    String
+  userId     String
+  payloadEnc String   @db.Text
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+}
+
+// ─────────────────────────── Mídia e templates ───────────────────────────
+
+model MediaAsset {
+  id           String      @id @default(cuid())
+  orgId        String
+  brandId      String?
+  kind         AssetKind
+  role         AssetRole
+  source       AssetSource @default(UPLOAD)
+  storageKey   String      @unique
+  mimeType     String
+  width        Int?
+  height       Int?
+  sizeBytes    Int?
+  durationSec  Float?
+  originalName String?
+  title        String?
+  tags         String[]    @default([])
+  prompt       String?     @db.Text
+  isApproved   Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+
+  brand      Brand?      @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  postMedia  PostMedia[]
+
+  @@index([brandId, role])
+}
+
+model Template {
+  id        String     @id @default(cuid())
+  orgId     String
+  brandId   String?
+  name      String
+  layout    String // hero-bottom | split-panel | question-card | offer | carousel | story
+  format    PostFormat
+  config    Json       @default("{}")
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  brand     Brand?     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────── Comercial ───────────────────────────
+
+model Offer {
+  id           String      @id @default(cuid())
+  orgId        String
+  brandId      String
+  operator     String
+  planName     String?
+  speedMbps    Int
+  priceCents   Int
+  pricePeriod  String      @default("/mês")
+  benefits     String[]    @default([])
+  conditions   String?     @db.Text
+  regions      String[]    @default([])
+  restrictions String?     @db.Text
+  validFrom    DateTime
+  validUntil   DateTime
+  status       OfferStatus @default(DRAFT)
+  approvedById String?
+  approvedAt   DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  brand        Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  posts        Post[]
+}
+
+model Campaign {
+  id          String    @id @default(cuid())
+  orgId       String
+  brandId     String
+  name        String
+  slug        String
+  objective   String?
+  startsAt    DateTime?
+  endsAt      DateTime?
+  createdAt   DateTime  @default(now())
+  brand       Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  posts       Post[]
+  links       TrackingLink[]
+
+  @@unique([brandId, slug])
+}
+
+// ─────────────────────────── Publicações ───────────────────────────
+
+model Post {
+  id               String     @id @default(cuid())
+  orgId            String
+  brandId          String
+  campaignId       String?
+  offerId          String?
+  pillar           Pillar
+  format           PostFormat
+  theme            String
+  objective        String?
+  title            String?
+  subtitle         String?
+  cta              String?
+  hashtags         String[]   @default([])
+  imagePrompt      String?    @db.Text
+  artDirection     String?    @db.Text
+  layout           String?
+  slides           Json? // carrossel: [{ title, body }]
+  reelScript       String?    @db.Text
+  episodeNumber    Int?
+  episodeSummary   String?    @db.Text
+  scheduledAt      DateTime?
+  timeReason       String?
+  status           PostStatus @default(PLANNED)
+  approvalRequired Boolean    @default(true)
+  approvalReasons  String[]   @default([])
+  approvedById     String?
+  approvedAt       DateTime?
+  origin           Origin     @default(AI)
+  aiModel          String?
+  generationError  String?    @db.Text
+  validation       Json?
+  contentHash      String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  brand    Brand        @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  campaign Campaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  offer    Offer?       @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  targets  PostTarget[]
+  media    PostMedia[]
+  links    TrackingLink[]
+
+  @@index([brandId, scheduledAt])
+  @@index([status, scheduledAt])
+}
+
+model PostMedia {
+  id       String     @id @default(cuid())
+  postId   String
+  assetId  String
+  position Int        @default(0)
+  purpose  String // BACKGROUND | COMPOSED | SLIDE | VIDEO | COVER
+  post     Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  asset    MediaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([postId, purpose])
+}
+
+model PostTarget {
+  id                  String         @id @default(cuid())
+  postId              String
+  network             Network
+  socialAccountId     String?
+  caption             String?        @db.Text
+  status              TargetStatus   @default(PENDING)
+  externalId          String?
+  externalContainerId String?
+  permalink           String?        @db.Text
+  publishedAt         DateTime?
+  attempts            Int            @default(0)
+  lastError           String?        @db.Text
+  nextRetryAt         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  post           Post              @relation(fields: [postId], references: [id], onDelete: Cascade)
+  socialAccount  SocialAccount?    @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+  attemptsLog    PublishAttempt[]
+  metrics        MetricSnapshot[]
+
+  @@unique([postId, network])
+  @@index([status, nextRetryAt])
+}
+
+model PublishAttempt {
+  id           String     @id @default(cuid())
+  targetId     String
+  startedAt    DateTime   @default(now())
+  finishedAt   DateTime?
+  success      Boolean    @default(false)
+  errorCode    String?
+  errorMessage String?    @db.Text
+  detail       Json?
+  target       PostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────── Métricas ───────────────────────────
+
+model MetricSnapshot {
+  id           String     @id @default(cuid())
+  targetId     String
+  collectedAt  DateTime   @default(now())
+  views        Int?
+  reach        Int?
+  likes        Int?
+  comments     Int?
+  shares       Int?
+  saves        Int?
+  interactions Int?
+  clicks       Int?
+  raw          Json?
+  target       PostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId, collectedAt])
+}
+
+model AccountMetricSnapshot {
+  id              String        @id @default(cuid())
+  socialAccountId String
+  date            DateTime
+  followers       Int?
+  mediaCount      Int?
+  profileViews    Int?
+  raw             Json?
+  account         SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([socialAccountId, date])
+}
+
+model PerformanceInsight {
+  id              String   @id @default(cuid())
+  brandId         String
+  periodStart     DateTime
+  periodEnd       DateTime
+  summary         String   @db.Text
+  data            Json
+  recommendations Json
+  createdAt       DateTime @default(now())
+  brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────── WhatsApp / rastreamento ───────────────────────────
+
+model TrackingLink {
+  id         String      @id @default(cuid())
+  orgId      String
+  brandId    String
+  code       String      @unique
+  postId     String?
+  campaignId String?
+  network    Network?
+  label      String?
+  message    String?     @db.Text
+  createdAt  DateTime    @default(now())
+  brand      Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  post       Post?       @relation(fields: [postId], references: [id], onDelete: SetNull)
+  campaign   Campaign?   @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  clicks     LinkClick[]
+}
+
+// Sem IP e sem identificadores pessoais: apenas contagem agregável.
+model LinkClick {
+  id        String       @id @default(cuid())
+  linkId    String
+  createdAt DateTime     @default(now())
+  device    String? // mobile | desktop
+  referrer  String?
+  converted Boolean      @default(false) // clicou em "continuar para o WhatsApp"
+  link      TrackingLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([linkId, createdAt])
+}
+
+// ─────────────────────────── Operação ───────────────────────────
+
+model Notification {
+  id        String            @id @default(cuid())
+  orgId     String
+  brandId   String?
+  level     NotificationLevel @default(INFO)
+  title     String
+  body      String?           @db.Text
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime          @default(now())
+  org       Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, readAt])
+}
+
+model AuditLog {
+  id        String       @id @default(cuid())
+  orgId     String
+  userId    String?
+  action    String
+  entity    String?
+  entityId  String?
+  meta      Json?
+  createdAt DateTime     @default(now())
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+}
+
+// Estado das tarefas agendadas do worker (lock distribuído simples)
+model TaskState {
+  name        String    @id
+  lastRunAt   DateTime?
+  lockedUntil DateTime?
+  lastOk      Boolean?
+  lastMessage String?   @db.Text
+  runs        Int       @default(0)
+}
+
+// Pautas/tendências verificadas pelo administrador (a IA não inventa acontecimentos)
+model TrendNote {
+  id         String    @id @default(cuid())
+  brandId    String
+  text       String    @db.Text
+  sourceUrl  String?
+  validUntil DateTime
+  createdAt  DateTime  @default(now())
+  brand      Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@index([brandId, validUntil])
+}
