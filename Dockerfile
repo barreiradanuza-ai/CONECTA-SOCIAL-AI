@@ -10,6 +10,8 @@ COPY source.zip /tmp/source.zip
 RUN unzip -q -o /tmp/source.zip -d /app && rm /tmp/source.zip
 
 RUN npm install --no-audit --no-fund
+# Relatório completo de tipos no log (não bloqueia o build)
+RUN npx prisma generate && (npx tsc --noEmit --pretty false || echo "TSC_REPORT_DONE")
 RUN npm run build
 
 ENV NODE_ENV=production
